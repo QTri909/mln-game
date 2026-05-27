@@ -1,13 +1,49 @@
 <!doctype html>
-<html lang="en">
+<html lang="vi">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>MLN Chase Game</title>
+    <title>MLN Chase Multiplayer</title>
   </head>
   <body>
     <div id="app"></div>
+
+    <div id="lobby-panel" class="panel">
+      <h1>MLN Chase</h1>
+      <input id="player-name" maxlength="16" placeholder="Tên người chơi" />
+      <div class="row">
+        <button id="create-room">Tạo phòng</button>
+        <input id="room-code-input" maxlength="6" placeholder="Mã phòng" />
+        <button id="join-room">Join</button>
+      </div>
+      <p id="connection-status">Chưa kết nối</p>
+      <div id="room-box" class="hidden">
+        <div class="room-line">Room: <strong id="room-code">------</strong></div>
+        <div id="players-list"></div>
+        <button id="start-game" class="hidden">Start Game</button>
+      </div>
+    </div>
+
+    <div id="hud" class="hud hidden">
+      <div>Room: <strong id="hud-room">------</strong></div>
+      <div>Players: <strong id="hud-count">0</strong>/12</div>
+      <div>Team: <strong id="hud-team">-</strong></div>
+      <div>Role: <strong id="hud-role">-</strong></div>
+      <div>Switch: <strong id="hud-timer">30</strong>s</div>
+      <div class="mana-wrap"><div id="mana-bar"></div></div>
+      <div id="respawn-status"></div>
+      <button id="question-button">Q: Câu hỏi</button>
+    </div>
+
+    <div id="question-modal" class="modal hidden">
+      <div class="question-box">
+        <h2>Câu hỏi MLN</h2>
+        <p id="question-text"></p>
+        <div id="question-options"></div>
+        <p id="question-feedback"></p>
+      </div>
+    </div>
+
     <script type="module" src="/src/main.js"></script>
   </body>
 </html>

@@ -1,131 +1,397 @@
 import Phaser from "phaser";
 import { Client, getStateCallbacks } from "colyseus.js";
+import "./style.css";
 
 const SERVER_URL = "ws://localhost:2567";
+const PLAYER_RADIUS = 16;
+
+let activeScene = null;
+
+const ui = {
+  lobbyPanel: document.getElementById("lobby-panel"),
+  playerName: document.getElementById("player-name"),
+  roomCodeInput: document.getElementById("room-code-input"),
+  createRoom: document.getElementById("create-room"),
+  joinRoom: document.getElementById("join-room"),
+  connectionStatus: document.getElementById("connection-status"),
+  roomBox: document.getElementById("room-box"),
+  roomCode: document.getElementById("room-code"),
+  playersList: document.getElementById("players-list"),
+  startGame: document.getElementById("start-game"),
+  hud: document.getElementById("hud"),
+  hudRoom: document.getElementById("hud-room"),
+  hudCount: document.getElementById("hud-count"),
+  hudTeam: document.getElementById("hud-team"),
+  hudRole: document.getElementById("hud-role"),
+  hudTimer: document.getElementById("hud-timer"),
+  manaBar: document.getElementById("mana-bar"),
+  respawnStatus: document.getElementById("respawn-status"),
+  questionButton: document.getElementById("question-button"),
+  questionModal: document.getElementById("question-modal"),
+  questionText: document.getElementById("question-text"),
+  questionOptions: document.getElementById("question-options"),
+  questionFeedback: document.getElementById("question-feedback"),
+};
 
 class MainScene extends Phaser.Scene {
   constructor() {
     super("MainScene");
-
+    this.client = new Client(SERVER_URL);
     this.room = null;
-    this.mySessionId = null;
-    this.players = {};
+    this.mySessionId = "";
+    this.players = new Map();
+    this.obstacles = new Map();
     this.keys = null;
-    this.lastMoveSent = 0;
+    this.keyQ = null;
+    this.lastInputSent = 0;
+    this.mapGraphics = null;
+    this.fog = null;
   }
 
-  preload() {}
+  create() {
+    activeScene = this;
 
-  async create() {
-    this.add.text(20, 20, "MLN Chase Demo - Phaser + Colyseus", {
-      fontSize: "20px",
-      color: "#ffffff",
+    this.cameras.main.setBackgroundColor("#14213d");
+    this.scale.on("resize", (size) => {
+      this.cameras.main.setSize(size.width, size.height);
     });
 
-    this.add.text(20, 50, "Dùng phím mũi tên để di chuyển", {
-      fontSize: "16px",
-      color: "#ffffff",
+    this.keys = this.input.keyboard.addKeys({
+      up: Phaser.Input.Keyboard.KeyCodes.W,
+      down: Phaser.Input.Keyboard.KeyCodes.S,
+      left: Phaser.Input.Keyboard.KeyCodes.A,
+      right: Phaser.Input.Keyboard.KeyCodes.D,
+      arrowUp: Phaser.Input.Keyboard.KeyCodes.UP,
+      arrowDown: Phaser.Input.Keyboard.KeyCodes.DOWN,
+      arrowLeft: Phaser.Input.Keyboard.KeyCodes.LEFT,
+      arrowRight: Phaser.Input.Keyboard.KeyCodes.RIGHT,
     });
+    this.keyQ = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.Q);
 
-    this.keys = this.input.keyboard.createCursorKeys();
+    this.mapGraphics = this.add.graphics();
+    this.fog = this.add.graphics();
+    this.fog.setScrollFactor(0);
+    this.fog.setDepth(1000);
 
-    const client = new Client(SERVER_URL);
+    ui.createRoom.addEventListener("click", () => this.createRoom());
+    ui.joinRoom.addEventListener("click", () => this.joinRoom());
+    ui.startGame.addEventListener("click", () => this.room?.send("start_game"));
+    ui.questionButton.addEventListener("click", () => this.requestQuestion());
+  }
 
-    const name = "Player_" + Math.floor(Math.random() * 1000);
-    const color = randomColor();
+  async createRoom() {
+    await this.connect(() =>
+      this.client.create("game_room", {
+        name: getPlayerName(),
+      })
+    );
+  }
 
-    this.room = await client.joinOrCreate("game_room", {
-      name,
-      color,
-    });
+  async joinRoom() {
+    const code = ui.roomCodeInput.value.trim().toUpperCase();
+    if (!code) {
+      ui.connectionStatus.textContent = "Nhập mã phòng trước khi join.";
+      return;
+    }
 
-    this.mySessionId = this.room.sessionId;
+    await this.connect(() =>
+      this.client.joinById(code, {
+        name: getPlayerName(),
+      })
+    );
+  }
 
-    console.log("Joined room:", this.room.roomId);
-    console.log("My session:", this.mySessionId);
+  async connect(joinAction) {
+    try {
+      ui.connectionStatus.textContent = "Đang kết nối...";
+      this.room = await joinAction();
+      this.mySessionId = this.room.sessionId;
+      this.bindRoom();
+      ui.connectionStatus.textContent = "Đã vào phòng.";
+      ui.roomBox.classList.remove("hidden");
+    } catch (error) {
+      ui.connectionStatus.textContent = "Không thể vào phòng. Kiểm tra mã phòng hoặc phòng đã đủ.";
+      console.error(error);
+    }
+  }
 
+  bindRoom() {
     const $ = getStateCallbacks(this.room);
 
-    $(this.room.state).players.onAdd((player, sessionId) => {
-      const circle = this.add.circle(player.x, player.y, 12, hexToNumber(player.color));
-
-      const label = this.add.text(player.x - 20, player.y - 30, player.name, {
-        fontSize: "12px",
-        color: "#ffffff",
-      });
-
-      this.players[sessionId] = {
-        circle,
-        label,
-        targetX: player.x,
-        targetY: player.y,
-      };
-
-      $(player).onChange(() => {
-        this.players[sessionId].targetX = player.x;
-        this.players[sessionId].targetY = player.y;
-      });
+    this.room.onMessage("room_info", (data) => {
+      ui.roomCode.textContent = data.roomCode;
+      ui.hudRoom.textContent = data.roomCode;
+      ui.startGame.classList.toggle("hidden", !data.isHost);
     });
 
-    $(this.room.state).players.onRemove((player, sessionId) => {
-      const view = this.players[sessionId];
+    this.room.onMessage("question", (data) => showQuestion(data));
+    this.room.onMessage("question_result", (data) => showQuestionResult(data));
+    this.room.onMessage("question_cooldown", (data) => {
+      ui.questionFeedback.textContent = `Chờ ${data.seconds}s để trả lời tiếp.`;
+    });
 
+    $(this.room.state).listen("phase", (phase) => {
+      const playing = phase === "playing";
+      ui.lobbyPanel.classList.toggle("hidden", playing);
+      ui.hud.classList.toggle("hidden", !playing);
+    });
+
+    $(this.room.state).listen("roomCode", (code) => {
+      ui.roomCode.textContent = code;
+      ui.hudRoom.textContent = code;
+    });
+
+    $(this.room.state).listen("hostId", () => {
+      this.syncRoomUi();
+    });
+
+    $(this.room.state).listen("playerCount", (count) => {
+      ui.hudCount.textContent = String(count);
+      this.renderLobbyPlayers();
+    });
+
+    $(this.room.state).listen("roleTimer", (timer) => {
+      ui.hudTimer.textContent = String(Math.ceil(timer));
+    });
+
+    $(this.room.state).obstacles.onAdd((obstacle, id) => this.addObstacle(obstacle, id));
+    $(this.room.state).players.onAdd((player, sessionId) => {
+      this.addPlayer(player, sessionId, $);
+      this.renderLobbyPlayers();
+    });
+    $(this.room.state).players.onRemove((_player, sessionId) => {
+      const view = this.players.get(sessionId);
       if (view) {
-        view.circle.destroy();
-        view.label.destroy();
-        delete this.players[sessionId];
+        view.container.destroy();
+        this.players.delete(sessionId);
       }
+      this.renderLobbyPlayers();
     });
   }
 
-  update(time, delta) {
+  syncRoomUi() {
+    if (!this.room || !this.room.state) return;
+    ui.roomCode.textContent = this.room.state.roomCode || this.room.roomId || "------";
+    ui.hudRoom.textContent = this.room.state.roomCode || this.room.roomId || "------";
+    ui.startGame.classList.toggle("hidden", this.room.state.hostId !== this.mySessionId);
+    this.renderLobbyPlayers();
+  }
+
+  addObstacle(obstacle, id) {
+    if (this.obstacles.has(id)) return;
+    const rect = this.add.rectangle(
+      obstacle.x + obstacle.width / 2,
+      obstacle.y + obstacle.height / 2,
+      obstacle.width,
+      obstacle.height,
+      0x293241
+    );
+    rect.setStrokeStyle(2, 0x4a5568);
+    this.obstacles.set(id, rect);
+  }
+
+  addPlayer(player, sessionId, $) {
+    if (this.players.has(sessionId)) return;
+
+    const body = this.add.circle(0, 0, PLAYER_RADIUS, teamColor(player.team));
+    const outline = this.add.circle(0, 0, PLAYER_RADIUS + 4);
+    outline.setStrokeStyle(4, roleColor(player.role), player.role === "Chaser" ? 1 : 0);
+    outline.setFillStyle(0x000000, 0);
+
+    const label = this.add.text(-34, -38, player.name, {
+      fontSize: "12px",
+      color: "#ffffff",
+      backgroundColor: "rgba(0,0,0,0.35)",
+      padding: { left: 4, right: 4, top: 2, bottom: 2 },
+    });
+
+    const container = this.add.container(player.x, player.y, [outline, body, label]);
+    container.setDepth(20);
+
+    const view = {
+      container,
+      body,
+      outline,
+      label,
+      targetX: player.x,
+      targetY: player.y,
+      player,
+    };
+
+    this.players.set(sessionId, view);
+
+    if (sessionId === this.mySessionId) {
+      this.cameras.main.startFollow(container, true, 0.12, 0.12);
+    }
+
+    $(player).onChange(() => {
+      view.targetX = player.x;
+      view.targetY = player.y;
+      view.body.setFillStyle(teamColor(player.team));
+      view.outline.setStrokeStyle(4, roleColor(player.role), player.role === "Chaser" ? 1 : 0);
+      view.container.setAlpha(player.alive ? 1 : 0.35);
+      this.renderLobbyPlayers();
+    });
+  }
+
+  renderLobbyPlayers() {
+    if (!this.room || !this.room.state || !this.room.state.players) return;
+    const rows = [];
+    this.room.state.players.forEach((player) => {
+      const host = player.isHost ? "Host" : "";
+      const team = player.team ? `Team ${player.team}` : "Lobby";
+      rows.push(`<div>${escapeHtml(player.name)} <span>${host} ${team}</span></div>`);
+    });
+    ui.playersList.innerHTML = rows.join("");
+  }
+
+  requestQuestion() {
+    if (!this.room || this.room.state.phase !== "playing") return;
+    ui.questionFeedback.textContent = "";
+    this.room.send("request_question");
+  }
+
+  update(time) {
     if (!this.room) return;
 
-    const up = this.keys.up.isDown;
-    const down = this.keys.down.isDown;
-    const left = this.keys.left.isDown;
-    const right = this.keys.right.isDown;
+    if (Phaser.Input.Keyboard.JustDown(this.keyQ)) {
+      this.requestQuestion();
+    }
 
-    if ((up || down || left || right) && time - this.lastMoveSent > 33) {
-      this.room.send("move", {
-        up,
-        down,
-        left,
-        right,
+    if (time - this.lastInputSent > 50) {
+      this.room.send("input", {
+        up: this.keys.up.isDown || this.keys.arrowUp.isDown,
+        down: this.keys.down.isDown || this.keys.arrowDown.isDown,
+        left: this.keys.left.isDown || this.keys.arrowLeft.isDown,
+        right: this.keys.right.isDown || this.keys.arrowRight.isDown,
       });
-
-      this.lastMoveSent = time;
+      this.lastInputSent = time;
     }
 
-    for (const sessionId in this.players) {
-      const view = this.players[sessionId];
+    this.players.forEach((view) => {
+      view.container.x += (view.targetX - view.container.x) * 0.35;
+      view.container.y += (view.targetY - view.container.y) * 0.35;
+    });
 
-      const lerp = sessionId === this.mySessionId ? 0.8 : 0.25;
+    this.updateHud();
+    this.drawMap();
+    this.drawFog();
+  }
 
-      view.circle.x += (view.targetX - view.circle.x) * lerp;
-      view.circle.y += (view.targetY - view.circle.y) * lerp;
+  updateHud() {
+    if (!this.room || !this.room.state || !this.room.state.players) return;
+    const me = this.room.state.players.get(this.mySessionId);
+    if (!me) return;
+    ui.hudTeam.textContent = me.team ? `Team ${me.team}` : "-";
+    ui.hudRole.textContent = me.role || "-";
+    ui.manaBar.style.width = `${Math.max(0, Math.min(100, me.mana))}%`;
+    ui.respawnStatus.textContent = me.alive ? "" : `Caught - hồi sinh sau ${Math.ceil(me.respawnLeft)}s`;
+  }
 
-      view.label.x = view.circle.x - 20;
-      view.label.y = view.circle.y - 30;
+  drawMap() {
+    if (!this.room || !this.room.state) return;
+    const state = this.room.state;
+    this.mapGraphics.clear();
+    this.mapGraphics.fillStyle(0x1f7a4d, 1);
+    this.mapGraphics.fillRect(0, 0, state.mapWidth, state.mapHeight);
+
+    this.mapGraphics.lineStyle(8, 0xfca311, 1);
+    this.mapGraphics.strokeRect(0, 0, state.mapWidth, state.mapHeight);
+
+    this.mapGraphics.lineStyle(1, 0x2a9d8f, 0.22);
+    for (let x = 0; x <= state.mapWidth; x += 160) {
+      this.mapGraphics.lineBetween(x, 0, x, state.mapHeight);
     }
+    for (let y = 0; y <= state.mapHeight; y += 160) {
+      this.mapGraphics.lineBetween(0, y, state.mapWidth, y);
+    }
+  }
+
+  drawFog() {
+    const me = this.players.get(this.mySessionId);
+    if (!me) return;
+
+    const camera = this.cameras.main;
+    const screenPoint = camera.getWorldPoint(camera.width / 2, camera.height / 2);
+    const playerScreenX = me.container.x - screenPoint.x + camera.width / 2;
+    const playerScreenY = me.container.y - screenPoint.y + camera.height / 2;
+    const vision = 260;
+    const left = Math.max(0, playerScreenX - vision);
+    const right = Math.min(camera.width, playerScreenX + vision);
+    const top = Math.max(0, playerScreenY - vision);
+    const bottom = Math.min(camera.height, playerScreenY + vision);
+
+    this.fog.clear();
+    this.fog.fillStyle(0x000000, 0.62);
+    this.fog.fillRect(0, 0, camera.width, top);
+    this.fog.fillRect(0, bottom, camera.width, camera.height - bottom);
+    this.fog.fillRect(0, top, left, bottom - top);
+    this.fog.fillRect(right, top, camera.width - right, bottom - top);
+    this.fog.lineStyle(46, 0x000000, 0.22);
+    this.fog.strokeRect(left, top, right - left, bottom - top);
   }
 }
 
 const config = {
   type: Phaser.AUTO,
-  width: 800,
-  height: 600,
-  backgroundColor: "#1e1e2f",
   parent: "app",
+  width: window.innerWidth,
+  height: window.innerHeight,
+  backgroundColor: "#14213d",
   scene: MainScene,
+  scale: {
+    mode: Phaser.Scale.RESIZE,
+    autoCenter: Phaser.Scale.CENTER_BOTH,
+  },
 };
 
 new Phaser.Game(config);
 
-function randomColor() {
-  return "#" + Math.floor(Math.random() * 16777215).toString(16).padStart(6, "0");
+function getPlayerName() {
+  return ui.playerName.value.trim() || `Player_${Math.floor(Math.random() * 1000)}`;
 }
 
-function hexToNumber(hex) {
-  return parseInt(hex.replace("#", ""), 16);
+function showQuestion(data) {
+  ui.questionModal.classList.remove("hidden");
+  ui.questionText.textContent = data.question;
+  ui.questionFeedback.textContent = "";
+  ui.questionOptions.innerHTML = "";
+
+  data.options.forEach((option, index) => {
+    const button = document.createElement("button");
+    button.textContent = option;
+    button.addEventListener("click", () => {
+      activeScene?.room?.send("answer_question", { selectedIndex: index });
+    });
+    ui.questionOptions.appendChild(button);
+  });
+}
+
+function showQuestionResult(data) {
+  ui.questionFeedback.textContent = data.correct
+    ? `Đúng. +${data.rewardMana} mana.`
+    : `Sai. Chờ ${data.cooldown}s để trả lời tiếp.`;
+
+  setTimeout(() => {
+    ui.questionModal.classList.add("hidden");
+  }, data.correct ? 900 : 1600);
+}
+
+function teamColor(team) {
+  if (team === "A") return 0x4aa3ff;
+  if (team === "B") return 0xff6b6b;
+  return 0xd9d9d9;
+}
+
+function roleColor(role) {
+  return role === "Chaser" ? 0xffd166 : 0x000000;
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
 }
