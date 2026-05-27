@@ -3,38 +3,64 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>MLN Chase Multiplayer</title>
+    <title>MLN Chase - Gimkit Edition</title>
+    <!-- Load Lexend Font from Google Fonts for Gimkit typography -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Lexend:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   </head>
   <body>
     <div id="app"></div>
 
+    <!-- Gimkit-style top header for room info -->
+    <div id="gim-header" class="gim-header hidden">
+      <div class="gim-header-title">Vào chơi tại <span>localhost:5173</span> và nhập mã</div>
+      <div id="room-code" class="gim-header-code">------</div>
+    </div>
+
+    <!-- Main lobby panel card -->
     <div id="lobby-panel" class="panel">
       <h1>MLN Chase</h1>
-      <input id="player-name" maxlength="16" placeholder="Tên người chơi" />
-      <div class="row">
-        <button id="create-room">Tạo phòng</button>
-        <input id="room-code-input" maxlength="6" placeholder="Mã phòng" />
-        <button id="join-room">Join</button>
-      </div>
-      <p id="connection-status">Chưa kết nối</p>
-      <div id="room-box" class="hidden">
-        <div class="room-line">Room: <strong id="room-code">------</strong></div>
-        <div id="players-list"></div>
-        <button id="start-game" class="hidden">Start Game</button>
+      <div class="panel-body">
+        <input id="player-name" maxlength="16" placeholder="Tên người chơi..." />
+        
+        <div class="row">
+          <button id="create-room" class="btn-create">Tạo phòng</button>
+          <div class="join-box">
+            <input id="room-code-input" maxlength="6" placeholder="Mã phòng" />
+            <button id="join-room" class="btn-join">Join</button>
+          </div>
+        </div>
+
+        <p id="connection-status">Chưa kết nối</p>
+
+        <!-- Room lobby state -->
+        <div id="room-box" class="hidden">
+          <div class="players-header">Người chơi trong phòng:</div>
+          <div id="players-list"></div>
+        </div>
       </div>
     </div>
 
+    <!-- Gimkit-style bottom status/action bar -->
+    <div id="gim-bottom-bar" class="gim-bottom-bar hidden">
+      <div id="gim-status-text" class="status-pulse">Đang đợi người chơi...</div>
+      <button id="start-game" class="btn-start hidden">Bắt đầu game</button>
+    </div>
+
+    <!-- Game HUD overlay -->
     <div id="hud" class="hud hidden">
-      <div>Room: <strong id="hud-room">------</strong></div>
-      <div>Players: <strong id="hud-count">0</strong>/12</div>
-      <div>Team: <strong id="hud-team">-</strong></div>
-      <div>Role: <strong id="hud-role">-</strong></div>
-      <div>Switch: <strong id="hud-timer">30</strong>s</div>
+      <div class="hud-item">Room: <strong id="hud-room">------</strong></div>
+      <div class="hud-item">Players: <strong id="hud-count">0</strong>/12</div>
+      <div class="hud-item">Team: <strong id="hud-team">-</strong></div>
+      <div class="hud-item">Role: <strong id="hud-role">-</strong></div>
+      <div class="hud-item">Switch: <strong id="hud-timer">30</strong>s</div>
       <div class="mana-wrap"><div id="mana-bar"></div></div>
       <div id="respawn-status"></div>
       <button id="question-button">Q: Câu hỏi</button>
     </div>
 
+    <!-- Question Modal -->
     <div id="question-modal" class="modal hidden">
       <div class="question-box">
         <h2>Câu hỏi MLN</h2>

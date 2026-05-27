@@ -31,6 +31,9 @@ const ui = {
   questionText: document.getElementById("question-text"),
   questionOptions: document.getElementById("question-options"),
   questionFeedback: document.getElementById("question-feedback"),
+  gimHeader: document.getElementById("gim-header"),
+  gimBottomBar: document.getElementById("gim-bottom-bar"),
+  gimStatusText: document.getElementById("gim-status-text"),
 };
 
 class MainScene extends Phaser.Scene {
@@ -72,7 +75,6 @@ class MainScene extends Phaser.Scene {
     this.fog = this.add.graphics();
     this.fog.setScrollFactor(0);
     this.fog.setDepth(1000);
-
     ui.createRoom.addEventListener("click", () => this.createRoom());
     ui.joinRoom.addEventListener("click", () => this.joinRoom());
     ui.startGame.addEventListener("click", () => this.room?.send("start_game"));
@@ -109,6 +111,8 @@ class MainScene extends Phaser.Scene {
       this.bindRoom();
       ui.connectionStatus.textContent = "Đã vào phòng.";
       ui.roomBox.classList.remove("hidden");
+      ui.gimHeader.classList.remove("hidden");
+      ui.gimBottomBar.classList.remove("hidden");
     } catch (error) {
       ui.connectionStatus.textContent = "Không thể vào phòng. Kiểm tra mã phòng hoặc phòng đã đủ.";
       console.error(error);
@@ -130,9 +134,19 @@ class MainScene extends Phaser.Scene {
       ui.questionFeedback.textContent = `Chờ ${data.seconds}s để trả lời tiếp.`;
     });
 
+    let hasInitializedState = false;
+    this.room.onStateChange((state) => {
+      if (!hasInitializedState) {
+        hasInitializedState = true;
+        this.syncRoomUi();
+      }
+    });
+
     $(this.room.state).listen("phase", (phase) => {
       const playing = phase === "playing";
       ui.lobbyPanel.classList.toggle("hidden", playing);
+      ui.gimHeader.classList.toggle("hidden", playing);
+      ui.gimBottomBar.classList.toggle("hidden", playing);
       ui.hud.classList.toggle("hidden", !playing);
     });
 
@@ -173,45 +187,50 @@ class MainScene extends Phaser.Scene {
     if (!this.room || !this.room.state) return;
     ui.roomCode.textContent = this.room.state.roomCode || this.room.roomId || "------";
     ui.hudRoom.textContent = this.room.state.roomCode || this.room.roomId || "------";
-    ui.startGame.classList.toggle("hidden", this.room.state.hostId !== this.mySessionId);
+    
+    const isHost = this.room.state.hostId === this.mySessionId;
+    ui.startGame.classList.toggle("hidden", !isHost);
+    ui.gimStatusText.textContent = isHost ? "Bạn là Host của phòng này." : "Đang đợi host bắt đầu...";
+    
     this.renderLobbyPlayers();
   }
 
   addObstacle(obstacle, id) {
     if (this.obstacles.has(id)) return;
+    
+    const colors = [0xa242ff, 0xff6b6b, 0x1070e0, 0xfca311];
+    const hash = id.split("").reduce((acc, char) => acc + char.charCodeAt(0), 0);
+    const fillColor = colors[hash % colors.length];
+
     const rect = this.add.rectangle(
       obstacle.x + obstacle.width / 2,
       obstacle.y + obstacle.height / 2,
       obstacle.width,
       obstacle.height,
-      0x293241
+      fillColor
     );
-    rect.setStrokeStyle(2, 0x4a5568);
+    rect.setStrokeStyle(4, 0xffffff, 1);
+    rect.setDepth(5);
     this.obstacles.set(id, rect);
   }
 
   addPlayer(player, sessionId, $) {
     if (this.players.has(sessionId)) return;
 
-    const body = this.add.circle(0, 0, PLAYER_RADIUS, teamColor(player.team));
-    const outline = this.add.circle(0, 0, PLAYER_RADIUS + 4);
-    outline.setStrokeStyle(4, roleColor(player.role), player.role === "Chaser" ? 1 : 0);
-    outline.setFillStyle(0x000000, 0);
-
-    const label = this.add.text(-34, -38, player.name, {
+    const charGraphics = this.add.graphics();
+    const label = this.add.text(-34, -48, player.name, {
       fontSize: "12px",
       color: "#ffffff",
       backgroundColor: "rgba(0,0,0,0.35)",
       padding: { left: 4, right: 4, top: 2, bottom: 2 },
     });
 
-    const container = this.add.container(player.x, player.y, [outline, body, label]);
+    const container = this.add.container(player.x, player.y, [charGraphics, label]);
     container.setDepth(20);
 
     const view = {
       container,
-      body,
-      outline,
+      charGraphics,
       label,
       targetX: player.x,
       targetY: player.y,
@@ -224,12 +243,12 @@ class MainScene extends Phaser.Scene {
       this.cameras.main.startFollow(container, true, 0.12, 0.12);
     }
 
+    this.drawGimCharacter(charGraphics, getPlayerColor(player), player.role, player.alive);
+
     $(player).onChange(() => {
       view.targetX = player.x;
       view.targetY = player.y;
-      view.body.setFillStyle(teamColor(player.team));
-      view.outline.setStrokeStyle(4, roleColor(player.role), player.role === "Chaser" ? 1 : 0);
-      view.container.setAlpha(player.alive ? 1 : 0.35);
+      this.drawGimCharacter(charGraphics, getPlayerColor(player), player.role, player.alive);
       this.renderLobbyPlayers();
     });
   }
@@ -292,18 +311,94 @@ class MainScene extends Phaser.Scene {
     if (!this.room || !this.room.state) return;
     const state = this.room.state;
     this.mapGraphics.clear();
-    this.mapGraphics.fillStyle(0x1f7a4d, 1);
+    this.mapGraphics.fillStyle(0x2d3436, 1);
     this.mapGraphics.fillRect(0, 0, state.mapWidth, state.mapHeight);
 
-    this.mapGraphics.lineStyle(8, 0xfca311, 1);
+    this.mapGraphics.lineStyle(8, 0x1e272e, 1);
     this.mapGraphics.strokeRect(0, 0, state.mapWidth, state.mapHeight);
 
-    this.mapGraphics.lineStyle(1, 0x2a9d8f, 0.22);
+    this.mapGraphics.lineStyle(1, 0x4b4c59, 0.25);
     for (let x = 0; x <= state.mapWidth; x += 160) {
       this.mapGraphics.lineBetween(x, 0, x, state.mapHeight);
     }
     for (let y = 0; y <= state.mapHeight; y += 160) {
       this.mapGraphics.lineBetween(0, y, state.mapWidth, y);
+    }
+  }
+
+
+
+  drawGimCharacter(graphics, color, role, alive) {
+    graphics.clear();
+    const alpha = alive ? 1 : 0.45;
+
+    graphics.fillStyle(0x000000, 0.22);
+    graphics.fillEllipse(0, PLAYER_RADIUS + 2, PLAYER_RADIUS * 1.2, 8);
+
+    const outlineColor = 0x111827;
+    const thickness = 3;
+
+    const footRadius = 7;
+    const footY = PLAYER_RADIUS + 1;
+    const leftFootX = -PLAYER_RADIUS * 0.45;
+    const rightFootX = PLAYER_RADIUS * 0.45;
+
+    graphics.lineStyle(thickness, outlineColor, alpha);
+    graphics.fillStyle(0xd1d5db, alpha);
+
+    graphics.fillCircle(leftFootX, footY, footRadius);
+    graphics.strokeCircle(leftFootX, footY, footRadius);
+
+    graphics.fillCircle(rightFootX, footY, footRadius);
+    graphics.strokeCircle(rightFootX, footY, footRadius);
+
+    graphics.fillStyle(color, alpha);
+    
+    const bodyW = PLAYER_RADIUS * 2.2;
+    const bodyH = PLAYER_RADIUS * 2.2;
+    const bodyX = -bodyW / 2;
+    const bodyY = -bodyH / 2 - 2;
+    const cornerRadius = 14;
+
+    graphics.fillRoundedRect(bodyX, bodyY, bodyW, bodyH, cornerRadius);
+    graphics.strokeRoundedRect(bodyX, bodyY, bodyW, bodyH, cornerRadius);
+
+    const eyeW = 4;
+    const eyeH = 8;
+    const leftEyeX = -PLAYER_RADIUS * 0.35;
+    const rightEyeX = PLAYER_RADIUS * 0.35;
+    const eyeY = -PLAYER_RADIUS * 0.15;
+
+    graphics.fillStyle(0x111827, alpha);
+    graphics.fillEllipse(leftEyeX, eyeY, eyeW, eyeH);
+    graphics.fillEllipse(rightEyeX, eyeY, eyeW, eyeH);
+
+    graphics.fillStyle(0xffffff, alpha);
+    graphics.fillCircle(leftEyeX - 1, eyeY - 2, 1);
+    graphics.fillCircle(rightEyeX - 1, eyeY - 2, 1);
+
+    if (role === "Chaser") {
+      graphics.fillStyle(0xffd166, alpha);
+      graphics.lineStyle(2, outlineColor, alpha);
+
+      const crownY = bodyY - 8;
+      const points = [
+        new Phaser.Geom.Point(-12, crownY + 6),
+        new Phaser.Geom.Point(-12, crownY),
+        new Phaser.Geom.Point(-6, crownY + 4),
+        new Phaser.Geom.Point(0, crownY - 3),
+        new Phaser.Geom.Point(6, crownY + 4),
+        new Phaser.Geom.Point(12, crownY),
+        new Phaser.Geom.Point(12, crownY + 6),
+      ];
+      graphics.beginPath();
+      graphics.moveTo(points[0].x, points[0].y);
+      for (let i = 1; i < points.length; i++) {
+        graphics.lineTo(points[i].x, points[i].y);
+      }
+      graphics.closePath();
+      graphics.fillPath();
+      graphics.strokePath();
     }
   }
 
@@ -378,13 +473,24 @@ function showQuestionResult(data) {
 }
 
 function teamColor(team) {
-  if (team === "A") return 0x4aa3ff;
+  if (team === "A") return 0x1070e0;
   if (team === "B") return 0xff6b6b;
   return 0xd9d9d9;
 }
 
 function roleColor(role) {
   return role === "Chaser" ? 0xffd166 : 0x000000;
+}
+
+function hexToNumber(hex) {
+  if (!hex) return 0x4aa3ff;
+  return parseInt(hex.replace("#", ""), 16);
+}
+
+function getPlayerColor(player) {
+  if (player.team === "A") return 0x1070e0;
+  if (player.team === "B") return 0xff6b6b;
+  return hexToNumber(player.color);
 }
 
 function escapeHtml(value) {
