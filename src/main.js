@@ -44,6 +44,7 @@ const ui = {
   questionFeedback: document.getElementById("question-feedback"),
   gimHeader: document.getElementById("gim-header"),
   gimBottomBar: document.getElementById("gim-bottom-bar"),
+  gimSideActions: document.getElementById("gim-side-actions"),
   gimStatusText: document.getElementById("gim-status-text"),
 };
 
@@ -63,6 +64,8 @@ class MainScene extends Phaser.Scene {
     this.lastInputSent = 0;
     this.mapDrawn = false;
     this.lastMana = 100;
+    this.cameraTargetX = 0;
+    this.cameraTargetY = 0;
   }
 
   create() {
@@ -147,6 +150,7 @@ class MainScene extends Phaser.Scene {
       ui.lobbyPanel.classList.add("hidden");
       ui.gimHeader.classList.remove("hidden");
       ui.gimBottomBar.classList.remove("hidden");
+      ui.gimSideActions.classList.remove("hidden");
       ui.hud.classList.remove("hidden");
     } catch (error) {
       ui.connectionStatus.textContent = "Không thể vào phòng. Kiểm tra mã phòng hoặc phòng đã đủ.";
@@ -186,6 +190,7 @@ class MainScene extends Phaser.Scene {
 
       ui.gimHeader.classList.toggle("hidden", playing || finished);
       ui.gimBottomBar.classList.toggle("hidden", playing || finished);
+      ui.gimSideActions.classList.toggle("hidden", playing || finished);
 
       const scoreBar = document.getElementById("gim-score-bar");
       if (scoreBar) scoreBar.classList.toggle("hidden", !playing);
@@ -262,12 +267,12 @@ class MainScene extends Phaser.Scene {
     this.floorTiles = this.add.tileSprite(mapWidth / 2, mapHeight / 2, mapWidth, mapHeight, textureKey);
     this.floorTiles.setDepth(-20);
 
-    this.drawFloorZone(120, 120, 1100, 760, 0x82d9ff, 0x5bc0eb);
-    this.drawFloorZone(1460, 150, 1120, 660, 0xffd166, 0xf7b731);
-    this.drawFloorZone(2780, 240, 880, 780, 0xff9fb2, 0xff6b8a);
-    this.drawFloorZone(360, 1180, 1180, 780, 0xb9fbc0, 0x62d97a);
-    this.drawFloorZone(1780, 1160, 1400, 900, 0xd8b4fe, 0xa855f7);
-    this.drawFloorZone(960, 2260, 2100, 520, 0xfde68a, 0xfacc15);
+    this.drawFloorZone(120, 120, 1100, 760, 0x666b72, 0x25282d);
+    this.drawFloorZone(1460, 150, 1120, 660, 0x737880, 0x282c31);
+    this.drawFloorZone(2780, 240, 880, 780, 0x686e76, 0x23262b);
+    this.drawFloorZone(360, 1180, 1180, 780, 0x71777f, 0x262a2f);
+    this.drawFloorZone(1780, 1160, 1400, 900, 0x676d75, 0x22262b);
+    this.drawFloorZone(960, 2260, 2100, 520, 0x757a82, 0x2a2e33);
 
     // Thick rounded orange boundary with black inline
     this.mapGraphics.lineStyle(16, 0xf59e0b, 1);
@@ -280,12 +285,10 @@ class MainScene extends Phaser.Scene {
   }
 
   drawFloorZone(x, y, width, height, fill, stroke) {
-    // 1. Draw outer orange/yellow border
-    this.mapGraphics.lineStyle(14, 0xf59e0b, 1);
+    this.mapGraphics.lineStyle(14, 0x231b2d, 0.65);
     this.mapGraphics.strokeRoundedRect(x, y, width, height, 36);
     
-    // 2. Draw black inline stroke
-    this.mapGraphics.lineStyle(6, OUTLINE_COLOR, 1);
+    this.mapGraphics.lineStyle(5, stroke, 1);
     this.mapGraphics.fillStyle(fill, 1);
     this.mapGraphics.fillRoundedRect(x, y, width, height, 36);
     this.mapGraphics.strokeRoundedRect(x, y, width, height, 36);
@@ -320,7 +323,7 @@ class MainScene extends Phaser.Scene {
 
   addObstacle(obstacle, id) {
     if (this.obstacles.has(id)) return;
-    this.obstacles.set(id, drawRoundedObstacle(this, obstacle, id));
+    this.obstacles.set(id, createObstacleView(this, obstacle, id));
   }
 
   addPlayer(player, sessionId, $) {
@@ -336,7 +339,6 @@ class MainScene extends Phaser.Scene {
     if (sessionId === this.mySessionId) {
       container.setPosition(player.x, player.y);
       this.snapCameraToPlayer(player.x, player.y);
-      this.cameras.main.startFollow(container, true, 0.12, 0.12);
       this.cameras.main.setZoom(1);
     }
 
@@ -410,13 +412,17 @@ class MainScene extends Phaser.Scene {
     this.players.forEach((view, sessionId) => {
       const previousX = view.container.x;
       const previousY = view.container.y;
-      view.container.x += (view.targetX - view.container.x) * 0.32;
-      view.container.y += (view.targetY - view.container.y) * 0.32;
-      const networkMoving = Phaser.Math.Distance.Between(previousX, previousY, view.container.x, view.container.y) > 0.08;
+      const followAlpha = 1 - Math.exp(-delta * 0.018);
+      view.container.x = Phaser.Math.Linear(view.container.x, view.targetX, followAlpha);
+      view.container.y = Phaser.Math.Linear(view.container.y, view.targetY, followAlpha);
+      const movedX = view.container.x - previousX;
+      const movedY = view.container.y - previousY;
+      const networkMoving = movedX * movedX + movedY * movedY > 0.0064;
       const isMoving = sessionId === this.mySessionId ? localInputMoving || networkMoving : networkMoving;
       updatePlayerView(view, view.player, delta, isMoving, time);
     });
 
+    updateCamera(this, delta);
     this.updateHud();
   }
 
@@ -514,6 +520,8 @@ class MainScene extends Phaser.Scene {
   }
 
   snapCameraToPlayer(x, y) {
+    this.cameraTargetX = x;
+    this.cameraTargetY = y;
     this.cameras.main.centerOn(x, y);
   }
 
@@ -766,13 +774,14 @@ function updatePlayerView(view, player, delta, isMoving, sceneTime = 0) {
   applyPlayerStyle(view, player);
 
   const dt = delta / 1000;
-  view.walkTime += dt * (isMoving && player.alive ? 13 : 4);
+  const walking = isMoving && player.alive;
+  view.walkTime += dt * (walking ? 12 : 4);
 
   const leftPhase = Math.sin(view.walkTime);
   const rightPhase = Math.sin(view.walkTime + Math.PI);
-  const bob = isMoving && player.alive ? Math.abs(Math.sin(view.walkTime * 2)) * 2 : 0;
+  const bob = walking ? Math.abs(Math.sin(sceneTime * 0.014)) * 4 : 0;
 
-  if (isMoving && player.alive) {
+  if (walking) {
     view.leftFoot.x = -22 + leftPhase * 8;
     view.leftFoot.y = 33 - Math.max(0, leftPhase) * 5;
     view.leftFoot.rotation = -0.08 + leftPhase * 0.2;
@@ -791,18 +800,19 @@ function updatePlayerView(view, player, delta, isMoving, sceneTime = 0) {
   }
 
   view.bodyGroup.y = -bob;
+  view.roleIcon.y = -44 - bob;
 
   const hasRole = player.role === "Chaser" || player.role === "Runner";
   if (hasRole && player.alive) {
-    view.roleIcon.y = -44 - bob;
     view.crown.y = -64 - bob;
   } else {
     view.crown.y = -39 - bob;
   }
 
-  view.label.y = 58;
-  view.shadow.scaleX = isMoving ? 1 + Math.abs(leftPhase) * 0.08 : 1;
-  view.shadow.scaleY = isMoving ? 0.92 : 1;
+  view.label.y = 58 - bob * 0.18;
+  const shadowScale = walking ? 1 - bob * 0.035 : 1;
+  view.shadow.scaleX = shadowScale;
+  view.shadow.scaleY = walking ? 0.92 - bob * 0.015 : 1;
 
   if (player.role === "Chaser" && player.alive) {
     view.chaserGlow.setAlpha(0.18 + Math.sin(sceneTime / 120) * 0.05);
@@ -818,17 +828,17 @@ function createMapTexture(scene) {
   const texture = scene.textures.createCanvas(key, 160, 160);
   const ctx = texture.getContext();
 
-  // Grey background texture
-  ctx.fillStyle = "#eef0f2";
+  // Gimkit-like rough gray floor texture.
+  ctx.fillStyle = "#565b61";
   ctx.fillRect(0, 0, 160, 160);
 
-  // Subtle grid lines
-  ctx.strokeStyle = "rgba(0, 0, 0, 0.02)";
+  // Subtle tile boundary.
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.025)";
   ctx.lineWidth = 2;
   ctx.strokeRect(0, 0, 160, 160);
 
   // Repeating dots/triangles/squares pattern
-  ctx.fillStyle = "rgba(0, 0, 0, 0.05)";
+  ctx.fillStyle = "rgba(255, 255, 255, 0.07)";
   
   // 1. Tiny dots
   ctx.beginPath();
@@ -858,48 +868,73 @@ function createMapTexture(scene) {
   ctx.closePath();
   ctx.fill();
 
+  ctx.fillStyle = "rgba(0, 0, 0, 0.08)";
+  ctx.beginPath();
+  ctx.arc(65, 22, 2, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillRect(18, 82, 4, 4);
+
   texture.refresh();
   return key;
 }
 
-function drawRoundedObstacle(scene, obstacle, id = "") {
-  // Shadow at depth 1
+function createObstacleView(scene, obstacle, id = "") {
+  const heightOffset = 12;
+  const radius = 18;
+  const strokeWidth = 5;
+  const fill = 0xf04f55;
+  const sideFill = shadeColor(fill, -58);
+  const topFill = shadeColor(fill, 24);
+
+  const container = scene.add.container(0, 0).setDepth(2);
   const shadow = scene.add.graphics();
-  shadow.setDepth(1);
-  shadow.fillStyle(0x000000, 0.15);
-  shadow.fillRoundedRect(obstacle.x + 9, obstacle.y + 12, obstacle.width, obstacle.height, 18);
+  const side = scene.add.graphics();
+  const top = scene.add.graphics();
+  const highlight = scene.add.graphics();
 
-  // Wall/Obstacle at depth 2
-  const wall = scene.add.graphics();
-  wall.setDepth(2);
-  const fillColors = [
-    0xffadad, // pastel red
-    0xffd6a5, // pastel orange
-    0xfdffb6, // pastel yellow
-    0xcaffbf, // pastel green
-    0x9bf6ff, // pastel blue
-    0xa0c4ff, // pastel indigo
-    0xbdb2ff, // pastel purple
-    0xffc6ff  // pastel pink
-  ];
-  const fill = fillColors[Math.abs(hashString(id)) % fillColors.length];
-  
-  // Layered strokes:
-  // 1. Orange/Yellow outer stroke (11px wide orange outline)
-  wall.lineStyle(11, 0xf59e0b, 1);
-  wall.strokeRoundedRect(obstacle.x, obstacle.y, obstacle.width, obstacle.height, 18);
+  shadow.fillStyle(0x000000, 0.18);
+  shadow.fillRoundedRect(
+    obstacle.x + 8,
+    obstacle.y + heightOffset + 10,
+    obstacle.width,
+    obstacle.height,
+    radius
+  );
 
-  // 2. Black inline (5px stroke) & Pastel fill
-  wall.lineStyle(5, OUTLINE_COLOR, 1);
-  wall.fillStyle(fill, 1);
-  wall.fillRoundedRect(obstacle.x, obstacle.y, obstacle.width, obstacle.height, 18);
-  wall.strokeRoundedRect(obstacle.x, obstacle.y, obstacle.width, obstacle.height, 18);
+  side.lineStyle(strokeWidth, OUTLINE_COLOR, 1);
+  side.fillStyle(sideFill, 1);
+  side.fillRoundedRect(
+    obstacle.x,
+    obstacle.y + heightOffset,
+    obstacle.width,
+    obstacle.height,
+    radius
+  );
+  side.strokeRoundedRect(
+    obstacle.x,
+    obstacle.y + heightOffset,
+    obstacle.width,
+    obstacle.height,
+    radius
+  );
 
-  // 3. Top-left highlight
-  wall.fillStyle(0xffffff, 0.28);
-  wall.fillRoundedRect(obstacle.x + 14, obstacle.y + 12, Math.max(20, obstacle.width * 0.45), 10, 5);
+  top.lineStyle(strokeWidth, OUTLINE_COLOR, 1);
+  top.fillStyle(topFill, 1);
+  top.fillRoundedRect(obstacle.x, obstacle.y, obstacle.width, obstacle.height, radius);
+  top.strokeRoundedRect(obstacle.x, obstacle.y, obstacle.width, obstacle.height, radius);
 
-  return { shadow, wall };
+  highlight.lineStyle(3, 0xffffff, 0.34);
+  highlight.beginPath();
+  highlight.moveTo(obstacle.x + radius, obstacle.y + 8);
+  highlight.lineTo(obstacle.x + obstacle.width - radius, obstacle.y + 8);
+  highlight.strokePath();
+  highlight.beginPath();
+  highlight.moveTo(obstacle.x + 8, obstacle.y + radius);
+  highlight.lineTo(obstacle.x + 8, obstacle.y + obstacle.height - radius);
+  highlight.strokePath();
+
+  container.add([shadow, side, top, highlight]);
+  return { container, shadow, side, top, highlight };
 }
 
 function applyPlayerStyle(view, player) {
@@ -963,6 +998,37 @@ function getFootColor(color) {
   const g = Math.max(0, ((color >> 8) & 0xff) - 68);
   const b = Math.max(0, (color & 0xff) - 68);
   return (r << 16) | (g << 8) | b;
+}
+
+function shadeColor(color, amount) {
+  const r = Phaser.Math.Clamp(((color >> 16) & 0xff) + amount, 0, 255);
+  const g = Phaser.Math.Clamp(((color >> 8) & 0xff) + amount, 0, 255);
+  const b = Phaser.Math.Clamp((color & 0xff) + amount, 0, 255);
+  return (r << 16) | (g << 8) | b;
+}
+
+function updateCamera(scene, delta = 16.67) {
+  const view = scene.players.get(scene.mySessionId);
+  if (!view || !scene.room?.state) return;
+
+  const camera = scene.cameras.main;
+  const mapWidth = scene.room.state.mapWidth || camera.width;
+  const mapHeight = scene.room.state.mapHeight || camera.height;
+  const halfWidth = camera.width * 0.5;
+  const halfHeight = camera.height * 0.5;
+  const maxX = Math.max(halfWidth, mapWidth - halfWidth);
+  const maxY = Math.max(halfHeight, mapHeight - halfHeight);
+
+  scene.cameraTargetX = Phaser.Math.Clamp(view.container.x, halfWidth, maxX);
+  scene.cameraTargetY = Phaser.Math.Clamp(view.container.y, halfHeight, maxY);
+
+  const currentX = camera.scrollX + halfWidth;
+  const currentY = camera.scrollY + halfHeight;
+  const cameraAlpha = 1 - Math.exp(-delta * 0.0075);
+  const nextX = Phaser.Math.Linear(currentX, scene.cameraTargetX, cameraAlpha);
+  const nextY = Phaser.Math.Linear(currentY, scene.cameraTargetY, cameraAlpha);
+
+  camera.centerOn(nextX, nextY);
 }
 
 function getPlayerName() {
