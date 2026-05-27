@@ -28,7 +28,7 @@
           <button id="create-room" class="btn-create">Tạo phòng</button>
           <div class="join-box">
             <input id="room-code-input" maxlength="6" placeholder="Mã phòng" />
-            <button id="join-room" class="btn-join">Join</button>
+            <button id="join-room" class="btn-join">Vào</button>
           </div>
         </div>
 
@@ -45,16 +45,47 @@
     <!-- Gimkit-style bottom status/action bar -->
     <div id="gim-bottom-bar" class="gim-bottom-bar hidden">
       <div id="gim-status-text" class="status-pulse">Đang đợi người chơi...</div>
+      
+      <div id="lobby-settings" class="lobby-settings">
+        <label for="game-duration">Thời gian:</label>
+        <select id="game-duration">
+          <option value="60">1 Phút</option>
+          <option value="120">2 Phút</option>
+          <option value="180" selected>3 Phút</option>
+          <option value="300">5 Phút</option>
+          <option value="420">7 Phút</option>
+          <option value="600">10 Phút</option>
+        </select>
+      </div>
+
       <button id="start-game" class="btn-start hidden">Bắt đầu game</button>
+    </div>
+
+    <!-- Team Score Bar -->
+    <div id="gim-score-bar" class="gim-score-bar hidden">
+      <div class="team-score-left">
+        <span class="team-name">Đội Xanh</span>
+        <span id="score-team-a" class="team-val">0</span>
+      </div>
+      <div class="score-progress-container">
+        <div id="score-progress-a" class="score-progress-a" style="width: 50%;"></div>
+        <div id="score-progress-b" class="score-progress-b" style="width: 50%;"></div>
+      </div>
+      <div class="team-score-right">
+        <span id="score-team-b" class="team-val">0</span>
+        <span class="team-name">Đội Đỏ</span>
+      </div>
     </div>
 
     <!-- Game HUD overlay -->
     <div id="hud" class="hud hidden">
-      <div class="hud-item">Room: <strong id="hud-room">------</strong></div>
-      <div class="hud-item">Players: <strong id="hud-count">0</strong>/12</div>
-      <div class="hud-item">Team: <strong id="hud-team">-</strong></div>
-      <div class="hud-item">Role: <strong id="hud-role">-</strong></div>
-      <div class="hud-item">Switch: <strong id="hud-timer">30</strong>s</div>
+      <div class="hud-item">Tên: <strong id="hud-name">-</strong></div>
+      <div class="hud-item">Phòng: <strong id="hud-room">------</strong></div>
+      <div class="hud-item">Người chơi: <strong id="hud-count">0</strong>/12</div>
+      <div class="hud-item">Đội: <strong id="hud-team">-</strong></div>
+      <div class="hud-item">Vai trò: <strong id="hud-role">-</strong></div>
+      <div class="hud-item">Đổi phe: <strong id="hud-timer">30</strong>s</div>
+      <div class="hud-item">Thời gian: <strong id="hud-match-timer">03:00</strong></div>
       <div class="mana-wrap"><div id="mana-bar"></div></div>
       <div id="respawn-status"></div>
       <button id="question-button">Q: Câu hỏi</button>
@@ -67,6 +98,36 @@
         <p id="question-text"></p>
         <div id="question-options"></div>
         <p id="question-feedback"></p>
+      </div>
+    </div>
+
+    <!-- Results Modal -->
+    <div id="results-modal" class="modal hidden">
+      <div class="results-box">
+        <div class="receipt-font">
+          <div class="results-line">====================================</div>
+          <h2 id="results-winner" class="results-winner">ĐỘI XANH THẮNG</h2>
+          <div class="results-line">====================================</div>
+          
+          <div class="results-score-row">
+            <span class="blue-text">Xanh: <strong id="results-blue-score">0</strong></span>
+            <span class="red-text">Đỏ: <strong id="results-red-score">0</strong></span>
+          </div>
+
+          <div class="top-players-section">
+            <div class="top-players-title">NHỮNG NGƯỜI CHƠI XUẤT SẮC (ĐỘI THẮNG)</div>
+            <div class="results-line">------------------------------------</div>
+            <div id="results-top-list" class="top-list">
+              <!-- Top players render here -->
+            </div>
+          </div>
+
+          <div class="results-actions">
+            <button id="results-play-again" class="btn-action hidden">[ CHƠI LẠI ]</button>
+            <button id="results-return-lobby" class="btn-action hidden">[ VỀ PHÒNG CHỜ ]</button>
+            <div id="results-wait-message" class="wait-text">Đang đợi chủ phòng...</div>
+          </div>
+        </div>
       </div>
     </div>
 
