@@ -2,8 +2,11 @@ import Phaser from "phaser";
 import { Client, getStateCallbacks } from "colyseus.js";
 import "./style.css";
 
-//const SERVER_URL = "ws://localhost:2567";
-const SERVER_URL = "wss://165.22.96.160.sslip.io";
+// Auto-detect: VITE_SERVER_URL env var → deployed DO server → local fallback
+const SERVER_URL = import.meta.env.VITE_SERVER_URL ||
+  (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1"
+    ? "ws://localhost:2567"
+    : "wss://165.22.96.160.sslip.io");
 const PLAYER_RADIUS = 18;
 const NORMAL_SPEED = 190;
 const TIRED_SPEED = 55;
@@ -56,9 +59,10 @@ class MainScene extends Phaser.Scene {
     super("MainScene");
     this.client = new Client(SERVER_URL);
     this.room = null;
-    this.mySessionId = "";
+    this.myPlayerId = ""; // Persistent ID stored in localStorage
     this.players = new Map();
     this.obstacles = new Map();
+    this.cachedObstacles = [];  // Flat array for fast per-frame collision checks
     this.decorationLayer = null;
     this.mapGraphics = null;
     this.floorTiles = null;
@@ -135,7 +139,8 @@ class MainScene extends Phaser.Scene {
   }
 
   async createRoom() {
-    await this.connect(() => this.client.create("game_room", { name: getPlayerName() }));
+    const playerId = getOrCreatePlayerId();
+    await this.connect(() => this.client.create("game_room", { name: getPlayerName(), playerId }));
   }
 
   async joinRoom() {
@@ -144,14 +149,15 @@ class MainScene extends Phaser.Scene {
       ui.connectionStatus.textContent = "Nhập mã phòng trước khi vào.";
       return;
     }
-    await this.connect(() => this.client.joinById(code, { name: getPlayerName() }));
+    const playerId = getOrCreatePlayerId();
+    await this.connect(() => this.client.joinById(code, { name: getPlayerName(), playerId }));
   }
 
   async connect(joinAction) {
     try {
       ui.connectionStatus.textContent = "Đang kết nối...";
       this.room = await joinAction();
-      this.mySessionId = this.room.sessionId;
+      this.myPlayerId = getOrCreatePlayerId();
       this.bindRoom();
       ui.connectionStatus.textContent = "Đã vào phòng.";
       ui.lobbyPanel.classList.add("hidden");
@@ -187,7 +193,7 @@ class MainScene extends Phaser.Scene {
       this.syncRoomUi();
       this.drawMapOnce();
       this.room.state.obstacles.forEach((obstacle, id) => this.addObstacle(obstacle, id));
-      this.room.state.players.forEach((player, sessionId) => this.addPlayer(player, sessionId, $));
+      this.room.state.players.forEach((player, playerId) => this.addPlayer(player, playerId, $));
     });
 
     $(this.room.state).listen("phase", (phase) => {
@@ -238,14 +244,14 @@ class MainScene extends Phaser.Scene {
     });
 
     $(this.room.state).obstacles.onAdd((obstacle, id) => this.addObstacle(obstacle, id));
-    $(this.room.state).players.onAdd((player, sessionId) => {
-      this.addPlayer(player, sessionId, $);
+    $(this.room.state).players.onAdd((player, playerId) => {
+      this.addPlayer(player, playerId, $);
       this.renderLobbyPlayers();
     });
-    $(this.room.state).players.onRemove((_player, sessionId) => {
-      const view = this.players.get(sessionId);
+    $(this.room.state).players.onRemove((_player, playerId) => {
+      const view = this.players.get(playerId);
       if (view) view.container.destroy();
-      this.players.delete(sessionId);
+      this.players.delete(playerId);
       this.renderLobbyPlayers();
     });
   }
@@ -255,7 +261,7 @@ class MainScene extends Phaser.Scene {
     ui.roomCode.textContent = this.room.state.roomCode || this.room.roomId || "------";
     ui.hudRoom.textContent = this.room.state.roomCode || this.room.roomId || "------";
 
-    const isHost = this.room.state.hostId === this.mySessionId;
+    const isHost = this.room.state.hostId === this.myPlayerId;
     ui.startGame.classList.toggle("hidden", !isHost);
     this.showStatus(isHost ? "Bạn là chủ phòng. Bắt đầu khi sẵn sàng!" : "Đợi chủ phòng bắt đầu...");
     
@@ -293,6 +299,10 @@ class MainScene extends Phaser.Scene {
 
     this.drawPatternDots(mapWidth, mapHeight);
     this.addDecorations();
+
+    // Cache obstacle list as plain array - avoids MapSchema proxy overhead each frame
+    this.cachedObstacles = [];
+    this.room.state.obstacles.forEach((obs) => this.cachedObstacles.push(obs));
   }
 
   drawFloorZone(x, y, width, height, fill, stroke) {
@@ -337,17 +347,17 @@ class MainScene extends Phaser.Scene {
     this.obstacles.set(id, createObstacleView(this, obstacle, id));
   }
 
-  addPlayer(player, sessionId, $) {
-    if (this.players.has(sessionId)) return;
+  addPlayer(player, playerId, $) {
+    if (this.players.has(playerId)) return;
 
     const view = createPlayerView(this, player);
     view.targetX = player.x;
     view.targetY = player.y;
     view.player = player;
     const container = view.container;
-    this.players.set(sessionId, view);
+    this.players.set(playerId, view);
 
-    if (sessionId === this.mySessionId) {
+    if (playerId === this.myPlayerId) {
       container.setPosition(player.x, player.y);
       this.snapCameraToPlayer(player.x, player.y);
       this.cameras.main.setZoom(1);
@@ -356,6 +366,13 @@ class MainScene extends Phaser.Scene {
     this.spawnPop(container);
 
     $(player).onChange(() => {
+      // Snap immediately on large teleports (game start → spawn, respawn after tag)
+      const jumpDist = Math.hypot(player.x - view.targetX, player.y - view.targetY);
+      if (jumpDist > 200) {
+        view.container.setPosition(player.x, player.y);
+        if (playerId === this.myPlayerId) this.snapCameraToPlayer(player.x, player.y);
+      }
+
       view.targetX = player.x;
       view.targetY = player.y;
       if (view.label.text !== player.name) view.label.setText(player.name);
@@ -367,7 +384,7 @@ class MainScene extends Phaser.Scene {
         view.container.setPosition(player.x, player.y);
         view.targetX = player.x;
         view.targetY = player.y;
-        if (sessionId === this.mySessionId) this.snapCameraToPlayer(player.x, player.y);
+        if (playerId === this.myPlayerId) this.snapCameraToPlayer(player.x, player.y);
         this.spawnPop(view.container);
       }
       if (view.lastRole && view.lastRole !== player.role) this.rolePulse(view.container);
@@ -427,12 +444,12 @@ class MainScene extends Phaser.Scene {
       this.keys.left.isDown || this.keys.arrowLeft.isDown ||
       this.keys.right.isDown || this.keys.arrowRight.isDown;
 
-    this.players.forEach((view, sessionId) => {
+    this.players.forEach((view, playerId) => {
       const previousX = view.container.x;
       const previousY = view.container.y;
 
-      if (sessionId === this.mySessionId) {
-        // Local Player - Client-Side Prediction
+      if (playerId === this.myPlayerId) {
+        // Local Player - Client-Side Prediction (no soft reconciliation to avoid pull-back)
         if (view.player.alive && localInputMoving) {
           let dx = 0;
           let dy = 0;
@@ -458,9 +475,9 @@ class MainScene extends Phaser.Scene {
               const oldX = view.container.x;
               view.container.x = Phaser.Math.Clamp(view.container.x + dx * dist, radius, mapWidth - radius);
               let hit = false;
-              this.room.state.obstacles.forEach((obstacle) => {
-                if (clientCircleRectHit(view.container.x, view.container.y, radius, obstacle)) hit = true;
-              });
+              for (let i = 0; i < this.cachedObstacles.length; i++) {
+                if (clientCircleRectHit(view.container.x, view.container.y, radius, this.cachedObstacles[i])) { hit = true; break; }
+              }
               if (hit) view.container.x = oldX;
             }
 
@@ -469,17 +486,12 @@ class MainScene extends Phaser.Scene {
               const oldY = view.container.y;
               view.container.y = Phaser.Math.Clamp(view.container.y + dy * dist, radius, mapHeight - radius);
               let hit = false;
-              this.room.state.obstacles.forEach((obstacle) => {
-                if (clientCircleRectHit(view.container.x, view.container.y, radius, obstacle)) hit = true;
-              });
+              for (let i = 0; i < this.cachedObstacles.length; i++) {
+                if (clientCircleRectHit(view.container.x, view.container.y, radius, this.cachedObstacles[i])) { hit = true; break; }
+              }
               if (hit) view.container.y = oldY;
             }
-
-            // SOFT reconciliation: gently nudge 3% toward server position each frame.
-            // This prevents drift from accumulating without causing snap-back rubber-banding.
-            // Hard corrections for respawn/tagging happen in addPlayer → onChange.
-            view.container.x = Phaser.Math.Linear(view.container.x, view.targetX, 0.03);
-            view.container.y = Phaser.Math.Linear(view.container.y, view.targetY, 0.03);
+            // No soft reconciliation here - large corrections handled by onChange snap (jumpDist > 200)
           }
         } else {
           // Idle or dead: smoothly interpolate to server position
@@ -516,7 +528,7 @@ class MainScene extends Phaser.Scene {
       const movedX = view.container.x - previousX;
       const movedY = view.container.y - previousY;
       const networkMoving = movedX * movedX + movedY * movedY > 0.0064;
-      const isMoving = sessionId === this.mySessionId ? localInputMoving || networkMoving : networkMoving;
+      const isMoving = playerId === this.myPlayerId ? localInputMoving || networkMoving : networkMoving;
       updatePlayerView(view, view.player, delta, isMoving, time);
     });
 
@@ -526,7 +538,7 @@ class MainScene extends Phaser.Scene {
 
   updateHud(time = 0) {
     if (!this.room?.state?.players) return;
-    const me = this.room.state.players.get(this.mySessionId);
+    const me = this.room.state.players.get(this.myPlayerId);
     if (!me) return;
 
     if (me.mana - this.lastMana >= 20) this.floatText("+30 Mana", 0x14b8a6);
@@ -630,7 +642,7 @@ class MainScene extends Phaser.Scene {
 
     renderTopPlayers(winningTeam, this.room.state.players);
 
-    const isHost = this.room.state.hostId === this.mySessionId;
+    const isHost = this.room.state.hostId === this.myPlayerId;
     const playAgainBtn = document.getElementById("results-play-again");
     const returnLobbyBtn = document.getElementById("results-return-lobby");
     const waitMsg = document.getElementById("results-wait-message");
@@ -1131,7 +1143,7 @@ function shadeColor(color, amount) {
 }
 
 function updateCamera(scene, delta = 16.67) {
-  const view = scene.players.get(scene.mySessionId);
+  const view = scene.players.get(scene.myPlayerId);
   if (!view || !scene.room?.state) return;
 
   const camera = scene.cameras.main;
@@ -1156,6 +1168,19 @@ function updateCamera(scene, delta = 16.67) {
 
 function getPlayerName() {
   return ui.playerName.value.trim() || `NguoiChoi_${Math.floor(Math.random() * 1000)}`;
+}
+
+// Returns a stable playerId stored in localStorage — survives page refreshes
+function getOrCreatePlayerId() {
+  const KEY = "mln_player_id";
+  let id = localStorage.getItem(KEY);
+  if (!id) {
+    id = (typeof crypto !== "undefined" && crypto.randomUUID)
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    localStorage.setItem(KEY, id);
+  }
+  return id;
 }
 
 function showQuestion(data) {
