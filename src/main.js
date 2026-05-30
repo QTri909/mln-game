@@ -303,6 +303,57 @@ class MainScene extends Phaser.Scene {
     // Cache obstacle list as plain array - avoids MapSchema proxy overhead each frame
     this.cachedObstacles = [];
     this.room.state.obstacles.forEach((obs) => this.cachedObstacles.push(obs));
+
+    // --- BAKE all static Graphics into a single RenderTexture ---
+    // This eliminates ~81 Graphics objects that Phaser re-submits vertex data
+    // for every frame (batchLine/batchTri/batchStrokePath = 17.6% of CPU).
+    // After baking: 1 texture draw per frame instead of ~81 vector draws.
+    this._bakeStaticGraphics(mapWidth, mapHeight);
+  }
+
+  _bakeStaticGraphics(mapWidth, mapHeight) {
+    // Collect all static game objects to bake into one texture
+    const toBake = [];
+
+    // Snapshot the children list (we'll be destroying items)
+    const snapshot = [...this.children.list];
+    for (const child of snapshot) {
+      if (child === this.floorTiles) continue; // keep as tileSprite
+      const d = child.depth;
+      const t = child.type;
+      // mapGraphics (depth -15), obstacle containers (depth 2),
+      // decoration shadows (depth 3), decoration props (depth 4),
+      // sign text (depth 4.5)
+      if (d >= -15 && d <= 4.5 && (t === "Graphics" || t === "Text" || t === "Container")) {
+        toBake.push(child);
+      }
+    }
+
+    if (toBake.length === 0) return;
+
+    // Sort by depth so they render in correct order
+    toBake.sort((a, b) => a.depth - b.depth);
+
+    // Create RenderTexture the size of the map
+    const rt = this.add.renderTexture(0, 0, mapWidth, mapHeight);
+    rt.setOrigin(0, 0);
+    rt.setDepth(-10); // Above floor tiles (-20), below players (20)
+
+    // Draw all static objects into the RenderTexture
+    rt.beginDraw();
+    for (const obj of toBake) {
+      rt.batchDraw(obj);
+    }
+    rt.endDraw();
+
+    // Destroy the original objects — they are baked now
+    for (const obj of toBake) {
+      obj.destroy();
+    }
+
+    // Clear references to destroyed objects
+    this.mapGraphics = null;
+    this.obstacles.clear();
   }
 
   drawFloorZone(x, y, width, height, fill, stroke) {
@@ -494,10 +545,21 @@ class MainScene extends Phaser.Scene {
             // No soft reconciliation here - large corrections handled by onChange snap (jumpDist > 200)
           }
         } else {
-          // Idle or dead: smoothly interpolate to server position
-          const followAlpha = 1 - Math.exp(-delta * 0.025);
-          view.container.x = Phaser.Math.Linear(view.container.x, view.targetX, followAlpha);
-          view.container.y = Phaser.Math.Linear(view.container.y, view.targetY, followAlpha);
+          // Idle or dead: very gently drift toward server position.
+          // The server catches up within 1-2 ticks (33-66ms), so we only
+          // need a tiny nudge here — prevents the visible snap-back that
+          // happened when the old alpha (0.34/frame) yanked the container
+          // backward to the stale server pos the instant keys were released.
+          const gap = Math.hypot(view.targetX - view.container.x, view.targetY - view.container.y);
+          if (gap < 2) {
+            // Close enough — snap to avoid micro-jitter
+            view.container.x = view.targetX;
+            view.container.y = view.targetY;
+          } else {
+            const followAlpha = 1 - Math.exp(-delta * 0.004);
+            view.container.x = Phaser.Math.Linear(view.container.x, view.targetX, followAlpha);
+            view.container.y = Phaser.Math.Linear(view.container.y, view.targetY, followAlpha);
+          }
         }
       } else {
         // Remote players receive uneven patches over the internet; ease toward
