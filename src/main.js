@@ -500,27 +500,21 @@ class MainScene extends Phaser.Scene {
           view.container.y = Phaser.Math.Linear(view.container.y, view.targetY, followAlpha);
         }
       } else {
-        // Remote Players - constant-speed interpolation toward server target
+        // Remote players receive uneven patches over the internet; ease toward
+        // each target instead of arriving early and waiting for the next patch.
         const rdx = view.targetX - view.container.x;
         const rdy = view.targetY - view.container.y;
         const rdist = Math.hypot(rdx, rdy);
 
         if (rdist > 0.1) {
-          if (rdist > 150) {
+          if (rdist > 220) {
             // Very large gap = respawn/teleport: snap immediately
             view.container.x = view.targetX;
             view.container.y = view.targetY;
           } else {
-            const playerSpeed = view.player.mana > 0 ? NORMAL_SPEED : TIRED_SPEED;
-            const speed = Math.max(playerSpeed, rdist / 0.08);
-            const step = speed * (delta / 1000);
-            if (step >= rdist) {
-              view.container.x = view.targetX;
-              view.container.y = view.targetY;
-            } else {
-              view.container.x += (rdx / rdist) * step;
-              view.container.y += (rdy / rdist) * step;
-            }
+            const followAlpha = 1 - Math.exp(-delta * 0.016);
+            view.container.x = Phaser.Math.Linear(view.container.x, view.targetX, followAlpha);
+            view.container.y = Phaser.Math.Linear(view.container.y, view.targetY, followAlpha);
           }
         }
       }
