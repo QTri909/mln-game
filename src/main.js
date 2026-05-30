@@ -4,6 +4,8 @@ import "./style.css";
 
 const SERVER_URL = "ws://localhost:2567";
 const PLAYER_RADIUS = 18;
+const NORMAL_SPEED = 190;
+const TIRED_SPEED = 55;
 const TEAM_A_COLOR = 0xaec3e5;
 const TEAM_B_COLOR = 0xf2a3a3;
 const LOBBY_COLOR = 0xaebed6;
@@ -66,6 +68,10 @@ class MainScene extends Phaser.Scene {
     this.lastMana = 100;
     this.cameraTargetX = 0;
     this.cameraTargetY = 0;
+    this.lastHudSync = 0;
+    this.hudSnapshot = {};
+    this.lobbyPlayersSnapshot = "";
+    this.lastRoleTimerCeil = null;
   }
 
   create() {
@@ -218,8 +224,12 @@ class MainScene extends Phaser.Scene {
       this.renderLobbyPlayers();
     });
     $(this.room.state).listen("roleTimer", (timer) => {
-      ui.hudTimer.textContent = String(Math.ceil(timer));
-      if (Math.ceil(timer) === 30) this.flashCenterText("Đổi phe!");
+      const roundedTimer = Math.ceil(timer);
+      ui.hudTimer.textContent = String(roundedTimer);
+      if (roundedTimer === 30 && this.lastRoleTimerCeil !== 30 && this.room.state.phase === "playing") {
+        this.flashCenterText("Đổi phe!");
+      }
+      this.lastRoleTimerCeil = roundedTimer;
     });
     $(this.room.state).listen("gameDuration", (duration) => {
       const select = document.getElementById("game-duration");
@@ -347,8 +357,9 @@ class MainScene extends Phaser.Scene {
     $(player).onChange(() => {
       view.targetX = player.x;
       view.targetY = player.y;
-      view.label.setText(player.name);
-      view.crown.setText(player.isHost ? "♛" : "");
+      if (view.label.text !== player.name) view.label.setText(player.name);
+      const crownText = player.isHost ? "♛" : "";
+      if (view.crown.text !== crownText) view.crown.setText(crownText);
 
       if (view.lastAlive && !player.alive) this.tagBurst(player.x, player.y);
       if (!view.lastAlive && player.alive) {
@@ -369,11 +380,16 @@ class MainScene extends Phaser.Scene {
   renderLobbyPlayers() {
     if (!this.room?.state?.players) return;
     const rows = [];
+    const snapshotParts = [];
     this.room.state.players.forEach((player) => {
       const crown = player.isHost ? "♛" : "";
       const team = player.team ? `Đội ${player.team}` : "Phòng chờ";
+      snapshotParts.push(`${player.name}:${player.isHost}:${player.team}`);
       rows.push(`<div><b>${crown} ${escapeHtml(player.name)}</b><span>${team}</span></div>`);
     });
+    const snapshot = snapshotParts.join("|");
+    if (snapshot === this.lobbyPlayersSnapshot) return;
+    this.lobbyPlayersSnapshot = snapshot;
     ui.playersList.innerHTML = rows.join("");
   }
 
@@ -393,7 +409,8 @@ class MainScene extends Phaser.Scene {
       this.requestQuestion();
     }
 
-    if (time - this.lastInputSent > 50) {
+    // Send input every ~33ms (≈30Hz) for lower latency
+    if (time - this.lastInputSent > 33) {
       this.room.send("input", {
         up: this.keys.up.isDown || this.keys.arrowUp.isDown,
         down: this.keys.down.isDown || this.keys.arrowDown.isDown,
@@ -412,9 +429,89 @@ class MainScene extends Phaser.Scene {
     this.players.forEach((view, sessionId) => {
       const previousX = view.container.x;
       const previousY = view.container.y;
-      const followAlpha = 1 - Math.exp(-delta * 0.018);
-      view.container.x = Phaser.Math.Linear(view.container.x, view.targetX, followAlpha);
-      view.container.y = Phaser.Math.Linear(view.container.y, view.targetY, followAlpha);
+
+      if (sessionId === this.mySessionId) {
+        // Local Player - Client-Side Prediction
+        if (view.player.alive && localInputMoving) {
+          let dx = 0;
+          let dy = 0;
+          if (this.keys.up.isDown || this.keys.arrowUp.isDown) dy -= 1;
+          if (this.keys.down.isDown || this.keys.arrowDown.isDown) dy += 1;
+          if (this.keys.left.isDown || this.keys.arrowLeft.isDown) dx -= 1;
+          if (this.keys.right.isDown || this.keys.arrowRight.isDown) dx += 1;
+
+          if (dx !== 0 || dy !== 0) {
+            const length = Math.hypot(dx, dy);
+            dx /= length;
+            dy /= length;
+
+            const speed = view.player.mana > 0 ? NORMAL_SPEED : TIRED_SPEED;
+            const dt = delta / 1000;
+            const dist = speed * dt;
+            const mapWidth = this.room.state.mapWidth;
+            const mapHeight = this.room.state.mapHeight;
+            const radius = 16;
+
+            // Move X axis with obstacle collision
+            if (dx !== 0) {
+              const oldX = view.container.x;
+              view.container.x = Phaser.Math.Clamp(view.container.x + dx * dist, radius, mapWidth - radius);
+              let hit = false;
+              this.room.state.obstacles.forEach((obstacle) => {
+                if (clientCircleRectHit(view.container.x, view.container.y, radius, obstacle)) hit = true;
+              });
+              if (hit) view.container.x = oldX;
+            }
+
+            // Move Y axis with obstacle collision
+            if (dy !== 0) {
+              const oldY = view.container.y;
+              view.container.y = Phaser.Math.Clamp(view.container.y + dy * dist, radius, mapHeight - radius);
+              let hit = false;
+              this.room.state.obstacles.forEach((obstacle) => {
+                if (clientCircleRectHit(view.container.x, view.container.y, radius, obstacle)) hit = true;
+              });
+              if (hit) view.container.y = oldY;
+            }
+
+            // SOFT reconciliation: gently nudge 3% toward server position each frame.
+            // This prevents drift from accumulating without causing snap-back rubber-banding.
+            // Hard corrections for respawn/tagging happen in addPlayer → onChange.
+            view.container.x = Phaser.Math.Linear(view.container.x, view.targetX, 0.03);
+            view.container.y = Phaser.Math.Linear(view.container.y, view.targetY, 0.03);
+          }
+        } else {
+          // Idle or dead: smoothly interpolate to server position
+          const followAlpha = 1 - Math.exp(-delta * 0.025);
+          view.container.x = Phaser.Math.Linear(view.container.x, view.targetX, followAlpha);
+          view.container.y = Phaser.Math.Linear(view.container.y, view.targetY, followAlpha);
+        }
+      } else {
+        // Remote Players - constant-speed interpolation toward server target
+        const rdx = view.targetX - view.container.x;
+        const rdy = view.targetY - view.container.y;
+        const rdist = Math.hypot(rdx, rdy);
+
+        if (rdist > 0.1) {
+          if (rdist > 150) {
+            // Very large gap = respawn/teleport: snap immediately
+            view.container.x = view.targetX;
+            view.container.y = view.targetY;
+          } else {
+            const playerSpeed = view.player.mana > 0 ? NORMAL_SPEED : TIRED_SPEED;
+            const speed = Math.max(playerSpeed, rdist / 0.08);
+            const step = speed * (delta / 1000);
+            if (step >= rdist) {
+              view.container.x = view.targetX;
+              view.container.y = view.targetY;
+            } else {
+              view.container.x += (rdx / rdist) * step;
+              view.container.y += (rdy / rdist) * step;
+            }
+          }
+        }
+      }
+
       const movedX = view.container.x - previousX;
       const movedY = view.container.y - previousY;
       const networkMoving = movedX * movedX + movedY * movedY > 0.0064;
@@ -423,29 +520,44 @@ class MainScene extends Phaser.Scene {
     });
 
     updateCamera(this, delta);
-    this.updateHud();
+    this.updateHud(time);
   }
 
-  updateHud() {
+  updateHud(time = 0) {
     if (!this.room?.state?.players) return;
     const me = this.room.state.players.get(this.mySessionId);
     if (!me) return;
 
-    ui.hudName.textContent = me.name || "-";
-    ui.hudRoom.textContent = this.room.state.roomCode || this.room.roomId || "------";
-    ui.hudCount.textContent = String(this.room.state.playerCount || this.room.state.players.size || 0);
-    ui.hudTeam.textContent = me.team ? `Đội ${me.team}` : "-";
-    ui.hudRole.textContent = me.role === "Chaser" ? "Người bắt" : (me.role === "Runner" ? "Người chạy" : "-");
-    ui.manaBar.style.width = `${Math.max(0, Math.min(100, me.mana))}%`;
-    ui.manaBar.classList.toggle("low", me.mana < 22);
-    ui.respawnStatus.textContent = me.alive ? "" : `Bị bắt - hồi sinh sau ${Math.ceil(me.respawnLeft)} giây`;
-
     if (me.mana - this.lastMana >= 20) this.floatText("+30 Mana", 0x14b8a6);
     this.lastMana = me.mana;
 
+    if (time - this.lastHudSync < 100) return;
+    this.lastHudSync = time;
+
+    const snapshot = {
+      name: me.name || "-",
+      room: this.room.state.roomCode || this.room.roomId || "------",
+      count: String(this.room.state.playerCount || this.room.state.players.size || 0),
+      team: me.team ? `Đội ${me.team}` : "-",
+      role: me.role === "Chaser" ? "Người bắt" : (me.role === "Runner" ? "Người chạy" : "-"),
+      mana: Math.round(Math.max(0, Math.min(100, me.mana))),
+      manaLow: me.mana < 22,
+      respawn: me.alive ? "" : `Bị bắt - hồi sinh sau ${Math.ceil(me.respawnLeft)} giây`,
+      timer: this.room.state.gameTimer !== undefined ? formatTime(this.room.state.gameTimer) : "",
+    };
+
+    if (this.hudSnapshot.name !== snapshot.name) ui.hudName.textContent = snapshot.name;
+    if (this.hudSnapshot.room !== snapshot.room) ui.hudRoom.textContent = snapshot.room;
+    if (this.hudSnapshot.count !== snapshot.count) ui.hudCount.textContent = snapshot.count;
+    if (this.hudSnapshot.team !== snapshot.team) ui.hudTeam.textContent = snapshot.team;
+    if (this.hudSnapshot.role !== snapshot.role) ui.hudRole.textContent = snapshot.role;
+    if (this.hudSnapshot.mana !== snapshot.mana) ui.manaBar.style.width = `${snapshot.mana}%`;
+    if (this.hudSnapshot.manaLow !== snapshot.manaLow) ui.manaBar.classList.toggle("low", snapshot.manaLow);
+    if (this.hudSnapshot.respawn !== snapshot.respawn) ui.respawnStatus.textContent = snapshot.respawn;
+
     const matchTimerEl = document.getElementById("hud-match-timer");
-    if (matchTimerEl && this.room.state.gameTimer !== undefined) {
-      matchTimerEl.textContent = formatTime(this.room.state.gameTimer);
+    if (matchTimerEl && this.hudSnapshot.timer !== snapshot.timer) {
+      matchTimerEl.textContent = snapshot.timer;
     }
 
     // Calculate team scores
@@ -462,19 +574,29 @@ class MainScene extends Phaser.Scene {
     const progressBEl = document.getElementById("score-progress-b");
 
     if (scoreAEl && scoreBEl && progressAEl && progressBEl) {
-      scoreAEl.textContent = String(scoreA);
-      scoreBEl.textContent = String(scoreB);
+      if (this.hudSnapshot.scoreA !== scoreA) scoreAEl.textContent = String(scoreA);
+      if (this.hudSnapshot.scoreB !== scoreB) scoreBEl.textContent = String(scoreB);
 
       const total = scoreA + scoreB;
       if (total === 0) {
-        progressAEl.style.width = "50%";
-        progressBEl.style.width = "50%";
+        if (this.hudSnapshot.progressA !== 50) {
+          progressAEl.style.width = "50%";
+          progressBEl.style.width = "50%";
+        }
+        snapshot.progressA = 50;
       } else {
         const pctA = (scoreA / total) * 100;
-        progressAEl.style.width = `${pctA}%`;
-        progressBEl.style.width = `${100 - pctA}%`;
+        const roundedPctA = Math.round(pctA);
+        if (this.hudSnapshot.progressA !== roundedPctA) {
+          progressAEl.style.width = `${pctA}%`;
+          progressBEl.style.width = `${100 - pctA}%`;
+        }
+        snapshot.progressA = roundedPctA;
       }
     }
+    snapshot.scoreA = scoreA;
+    snapshot.scoreB = scoreB;
+    this.hudSnapshot = snapshot;
   }
 
   showGameResults() {
@@ -1100,4 +1222,14 @@ function renderTopPlayers(winningTeam, players) {
     `;
     container.appendChild(row);
   });
+}
+
+function clientClamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function clientCircleRectHit(cx, cy, radius, rect) {
+  const nearestX = clientClamp(cx, rect.x, rect.x + rect.width);
+  const nearestY = clientClamp(cy, rect.y, rect.y + rect.height);
+  return Math.hypot(cx - nearestX, cy - nearestY) < radius;
 }
