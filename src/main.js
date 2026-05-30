@@ -2,7 +2,8 @@ import Phaser from "phaser";
 import { Client, getStateCallbacks } from "colyseus.js";
 import "./style.css";
 
-const SERVER_URL = "ws://localhost:2567";
+//const SERVER_URL = "ws://localhost:2567";
+const SERVER_URL = "ws://165.22.96.160:2567";
 const PLAYER_RADIUS = 18;
 const NORMAL_SPEED = 190;
 const TIRED_SPEED = 55;
