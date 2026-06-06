@@ -6,7 +6,7 @@ import "./style.css";
 const SERVER_URL = import.meta.env.VITE_SERVER_URL ||
   (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1"
     ? "ws://localhost:2567"
-    : "wss://168.144.107.254.sslip.io");
+    : "wss://146.190.86.212.sslip.io");
 const PLAYER_RADIUS = 18;
 const NORMAL_SPEED = 190;
 const TIRED_SPEED = 55;
