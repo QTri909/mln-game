@@ -24,6 +24,9 @@ const FOOT_HEIGHT = 22;
 let activeScene = null;
 
 const ui = {
+  homePage: document.getElementById("home-page"),
+  startPlayButtons: document.querySelectorAll("[data-start-play]"),
+  backHome: document.getElementById("back-home"),
   lobbyPanel: document.getElementById("lobby-panel"),
   playerName: document.getElementById("player-name"),
   roomCodeInput: document.getElementById("room-code-input"),
@@ -107,6 +110,20 @@ class MainScene extends Phaser.Scene {
 
     this.mapGraphics = this.add.graphics();
 
+    ui.startPlayButtons.forEach((button) => {
+      button.addEventListener("click", () => {
+        ui.homePage?.classList.add("hidden");
+        ui.lobbyPanel.classList.remove("hidden");
+        document.body.classList.remove("home-active");
+      });
+    });
+    ui.backHome?.addEventListener("click", () => {
+      ui.lobbyPanel.classList.add("hidden");
+      ui.homePage?.classList.remove("hidden");
+      document.body.classList.add("home-active");
+      history.replaceState(null, "", window.location.pathname + window.location.search);
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    });
     ui.createRoom.addEventListener("click", () => this.createRoom());
     ui.joinRoom.addEventListener("click", () => this.joinRoom());
     ui.startGame.addEventListener("click", () => {
