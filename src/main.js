@@ -1,12 +1,7 @@
 import Phaser from "phaser";
-import { Client, getStateCallbacks } from "colyseus.js";
+import { OfflineClient, getStateCallbacks } from "./offlineClient.js";
 import "./style.css";
 
-// Auto-detect: VITE_SERVER_URL env var → deployed DO server → local fallback
-const SERVER_URL = import.meta.env.VITE_SERVER_URL ||
-  (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1"
-    ? "ws://localhost:2567"
-    : "wss://146.190.86.212.sslip.io");
 const PLAYER_RADIUS = 18;
 const NORMAL_SPEED = 190;
 const TIRED_SPEED = 55;
@@ -60,7 +55,7 @@ const ui = {
 class MainScene extends Phaser.Scene {
   constructor() {
     super("MainScene");
-    this.client = new Client(SERVER_URL);
+    this.client = new OfflineClient();
     this.room = null;
     this.myPlayerId = ""; // Persistent ID stored in localStorage
     this.players = new Map();
@@ -157,17 +152,12 @@ class MainScene extends Phaser.Scene {
 
   async createRoom() {
     const playerId = getOrCreatePlayerId();
-    await this.connect(() => this.client.create("game_room", { name: getPlayerName(), playerId }));
+    await this.connect(() => this.client.create("offline_game", { name: getPlayerName(), playerId }));
   }
 
   async joinRoom() {
-    const code = ui.roomCodeInput.value.trim().toUpperCase();
-    if (!code) {
-      ui.connectionStatus.textContent = "Nhập mã phòng trước khi vào.";
-      return;
-    }
     const playerId = getOrCreatePlayerId();
-    await this.connect(() => this.client.joinById(code, { name: getPlayerName(), playerId }));
+    await this.connect(() => this.client.joinById("OFFLINE", { name: getPlayerName(), playerId }));
   }
 
   async connect(joinAction) {
@@ -183,7 +173,7 @@ class MainScene extends Phaser.Scene {
       ui.gimSideActions.classList.remove("hidden");
       ui.hud.classList.remove("hidden");
     } catch (error) {
-      ui.connectionStatus.textContent = "Không thể vào phòng. Kiểm tra mã phòng hoặc phòng đã đủ.";
+      ui.connectionStatus.textContent = "Không thể mở chế độ offline.";
       console.error(error);
     }
   }
@@ -260,12 +250,12 @@ class MainScene extends Phaser.Scene {
       if (select) select.value = String(duration);
     });
 
-    $(this.room.state).obstacles.onAdd((obstacle, id) => this.addObstacle(obstacle, id));
-    $(this.room.state).players.onAdd((player, playerId) => {
+    $(this.room.state.obstacles).onAdd((obstacle, id) => this.addObstacle(obstacle, id));
+    $(this.room.state.players).onAdd((player, playerId) => {
       this.addPlayer(player, playerId, $);
       this.renderLobbyPlayers();
     });
-    $(this.room.state).players.onRemove((_player, playerId) => {
+    $(this.room.state.players).onRemove((_player, playerId) => {
       const view = this.players.get(playerId);
       if (view) view.container.destroy();
       this.players.delete(playerId);

@@ -55,7 +55,7 @@
         <h2>Cách chơi</h2>
         <div class="steps-grid">
           <article><span>1</span><strong>Nhập tên</strong><p>Nhập tên của bạn để bắt đầu hành trình.</p></article>
-          <article><span>2</span><strong>Tạo phòng / Vào phòng</strong><p>Tạo phòng mới hoặc nhập mã để tham gia.</p></article>
+          <article><span>2</span><strong>Bắt đầu offline</strong><p>Tạo lượt chơi 1 người ngay trên trình duyệt, không cần server.</p></article>
           <article><span>3</span><strong>Di chuyển & trả lời</strong><p>Di chuyển, trả lời câu hỏi và đuổi bắt để ghi điểm.</p></article>
           <article><span>4</span><strong>Tính điểm / chiến thắng</strong><p>Đạt thay đổi về lượng chiến thắng và nhận vinh danh.</p></article>
         </div>
@@ -122,7 +122,7 @@
 
     <!-- Gimkit-style top header for room info -->
     <div id="gim-header" class="gim-header hidden">
-      <div class="gim-header-title">Vào chơi tại <span>localhost:5173</span> và nhập mã</div>
+      <div class="gim-header-title">Chế độ <span>Offline</span> - chơi trực tiếp trên trình duyệt</div>
       <div id="room-code" class="gim-header-code">------</div>
     </div>
 
@@ -138,10 +138,10 @@
         <input id="player-name" maxlength="16" placeholder="Tên người chơi..." />
         
         <div class="row">
-          <button id="create-room" class="btn-create">Tạo phòng</button>
+          <button id="create-room" class="btn-create">Chơi offline</button>
           <div class="join-box">
             <input id="room-code-input" maxlength="6" placeholder="Mã phòng" />
-            <button id="join-room" class="btn-join">Vào</button>
+            <button id="join-room" class="btn-join">Vào offline</button>
           </div>
         </div>
 
