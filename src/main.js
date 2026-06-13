@@ -75,6 +75,7 @@ class MainScene extends Phaser.Scene {
     this.hudSnapshot = {};
     this.lobbyPlayersSnapshot = "";
     this.lastRoleTimerCeil = null;
+    this.cooldownInterval = null;
   }
 
   create() {
@@ -187,10 +188,31 @@ class MainScene extends Phaser.Scene {
       ui.startGame.classList.toggle("hidden", !data.isHost);
     });
 
-    this.room.onMessage("question", (data) => showQuestion(data));
+    this.room.onMessage("question", (data) => {
+      if (this.cooldownInterval) {
+        clearInterval(this.cooldownInterval);
+        this.cooldownInterval = null;
+      }
+      showQuestion(data);
+    });
     this.room.onMessage("question_result", (data) => this.showQuestionResult(data));
     this.room.onMessage("question_cooldown", (data) => {
-      ui.questionFeedback.textContent = `Chờ ${data.seconds}s để trả lời tiếp.`;
+      if (this.cooldownInterval) clearInterval(this.cooldownInterval);
+
+      let secondsLeft = data.seconds;
+      ui.questionFeedback.textContent = `Chờ ${secondsLeft}s để trả lời tiếp.`;
+
+      this.cooldownInterval = setInterval(() => {
+        secondsLeft -= 1;
+        if (secondsLeft <= 0) {
+          clearInterval(this.cooldownInterval);
+          this.cooldownInterval = null;
+          ui.questionFeedback.textContent = "";
+          this.room?.send("request_question");
+        } else {
+          ui.questionFeedback.textContent = `Chờ ${secondsLeft}s để trả lời tiếp.`;
+        }
+      }, 1000);
     });
 
     let initialized = false;
@@ -225,6 +247,14 @@ class MainScene extends Phaser.Scene {
       ui.hud.classList.toggle("hidden", finished);
       this.showStatus(playing ? "Trò chơi bắt đầu!" : (lobby ? "Đang đợi người chơi..." : "Trò chơi kết thúc!"));
       if (playing) this.flashCenterText("Đã phân vai trò!");
+
+      if (!playing) {
+        ui.questionModal.classList.add("hidden");
+        if (this.cooldownInterval) {
+          clearInterval(this.cooldownInterval);
+          this.cooldownInterval = null;
+        }
+      }
     });
 
     $(this.room.state).listen("roomCode", (code) => {
@@ -805,6 +835,10 @@ class MainScene extends Phaser.Scene {
   }
 
   showQuestionResult(data) {
+    if (this.cooldownInterval) {
+      clearInterval(this.cooldownInterval);
+      this.cooldownInterval = null;
+    }
     ui.questionFeedback.textContent = data.correct
       ? `Chính xác! +${data.rewardMana} Mana`
       : `Sai rồi. Thử lại sau ${data.cooldown} giây.`;

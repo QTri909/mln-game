@@ -1341,6 +1341,11 @@ body::after {
   box-shadow: none;
 }
 
+.lobby-settings select option {
+  background-color: #2f3a4a;
+  color: #ffffff;
+}
+
 .btn-start {
   justify-self: center;
   color: #ffffff;
